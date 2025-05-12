@@ -84,12 +84,25 @@ class ChatService {
 
   async deleteSession(sessionId: string) {
     const supabase = createClient();
-    const { error } = await supabase
+
+    // First delete all messages associated with this chat session
+    const { error: messagesError } = await supabase
+      .from("messages")
+      .delete()
+      .eq("chat_session_id", sessionId);
+
+    if (messagesError) {
+      console.error("Error deleting messages:", messagesError);
+      throw messagesError;
+    }
+
+    // Then delete the chat session
+    const { error: sessionError } = await supabase
       .from("chat_sessions")
       .delete()
       .eq("id", sessionId);
 
-    if (error) throw error;
+    if (sessionError) throw sessionError;
   }
 
   async subscribeToSessions(

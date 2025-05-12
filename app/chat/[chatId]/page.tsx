@@ -10,6 +10,7 @@ import { MdFullscreen } from "react-icons/md";
 import { chatService } from "@/lib/services/chat";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
+import { createClient } from "@/lib/supabase/client";
 
 interface Message {
   content: string;
@@ -25,6 +26,7 @@ const MainPage = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [chatExists, setChatExists] = useState(true);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [fullscreenCode, setFullscreenCode] = useState<{
@@ -43,9 +45,76 @@ const MainPage = () => {
     scrollToBottom();
   }, [messages]);
 
+  useEffect(() => {
+    const chatId = window.location.pathname.split("/").pop();
+    if (!chatId) return;
+
+    const loadMessages = async () => {
+      const supabase = createClient();
+
+      // First check if chat session exists
+      const { data: chatSession, error: chatError } = await supabase
+        .from("chat_sessions")
+        .select("id")
+        .eq("id", chatId)
+        .single();
+
+      if (chatError || !chatSession) {
+        console.error("Chat session not found");
+        setChatExists(false);
+        return;
+      }
+
+      // If chat exists, load messages
+      const { data, error } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("chat_session_id", chatId)
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.error("Error loading messages:", error);
+        return;
+      }
+
+      const formattedMessages = data.map((msg) => ({
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+        // Parse code blocks and explanation if it's an AI message
+        ...(msg.role === "assistant" && {
+          codeBlocks: extractCodeBlocks(msg.content),
+          explanation: msg.content.replace(/```[\s\S]*?```/g, "").trim(),
+        }),
+      }));
+
+      setMessages(formattedMessages);
+    };
+
+    loadMessages();
+  }, []);
+
+  // Helper function to extract code blocks
+  const extractCodeBlocks = (content: string) => {
+    const codeBlockRegex = /```(\w+)?\s*([\s\S]*?)```/g;
+    const blocks = [];
+    let match;
+
+    while ((match = codeBlockRegex.exec(content)) !== null) {
+      blocks.push({
+        language: match[1] || "text",
+        code: match[2].trim(),
+      });
+    }
+
+    return blocks;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
+
+    const chatId = window.location.pathname.split("/").pop();
+    if (!chatId) return;
 
     const userMessage: Message = { role: "user", content: input };
     setMessages((prev) => [...prev, userMessage]);
@@ -53,6 +122,43 @@ const MainPage = () => {
     setIsLoading(true);
 
     try {
+      const supabase = createClient();
+
+      // Save user message to Supabase
+      const { error: userMessageError } = await supabase
+        .from("messages")
+        .insert({
+          chat_session_id: chatId,
+          content: input,
+          role: "user",
+          created_at: new Date().toISOString(),
+        })
+        .select();
+
+      if (userMessageError) {
+        console.error("Error saving user message:", userMessageError);
+        throw new Error("Failed to save user message");
+      }
+
+      // Update chat session title if this is the first message
+      const { data: messagesCount, error: countError } = await supabase
+        .from("messages")
+        .select("id", { count: "exact" })
+        .eq("chat_session_id", chatId);
+
+      if (!countError && messagesCount.length === 1) {
+        // This is the first message, update the chat title
+        const { error: updateError } = await supabase
+          .from("chat_sessions")
+          .update({ title: input })
+          .eq("id", chatId);
+
+        if (updateError) {
+          console.error("Error updating chat title:", updateError);
+        }
+      }
+
+      // Get AI response
       const response = await fetch("/api/getAIresponse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -74,9 +180,31 @@ const MainPage = () => {
         codeBlocks: data.codeBlocks,
         explanation: data.explanation,
       };
+
+      // Save AI message to Supabase
+      const { error: aiMessageError } = await supabase
+        .from("messages")
+        .insert({
+          chat_session_id: chatId,
+          content: data.message,
+          role: "assistant",
+          created_at: new Date().toISOString(),
+        })
+        .select();
+
+      if (aiMessageError) {
+        console.error("Error saving AI message:", aiMessageError);
+        throw new Error("Failed to save AI message");
+      }
+
       setMessages((prev) => [...prev, aiMessage]);
     } catch (error) {
       console.error("Error:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to send message",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -170,6 +298,29 @@ const MainPage = () => {
       </div>
     );
   };
+
+  if (!chatExists) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gradient-to-b from-background to-background/95">
+        <div className="text-center space-y-4">
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="flex flex-col items-center gap-4"
+          >
+            <FaRobot className="w-16 h-16 text-primary/50" />
+            <h1 className="text-2xl font-semibold">Chat Not Found</h1>
+            <p className="text-muted-foreground">
+              This chat session doesn&apos;t exist or has been deleted.
+            </p>
+            <Button onClick={() => router.push("/")} className="mt-4">
+              Return to Home
+            </Button>
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-gradient-to-b from-background to-background/95">

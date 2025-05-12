@@ -12,6 +12,7 @@
     "switch:bun": "rm -rf package-lock.json node_modules yarn.lock && bun install"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-label": "^2.1.1",
     "@radix-ui/react-slot": "^1.1.1",
