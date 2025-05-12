@@ -22,7 +22,7 @@ const Header = ({ onMenuClick }: HeaderProps) => {
             variant="ghost"
             size="icon"
             onClick={onMenuClick}
-            className="md:hidden hover:bg-primary/10"
+            className="hover:bg-primary/10"
           >
             <IoMenuOutline className="w-6 h-6" />
           </Button>

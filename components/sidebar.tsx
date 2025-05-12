@@ -1,7 +1,7 @@
 "use client";
 import { motion } from "framer-motion";
 import { IoClose } from "react-icons/io5";
-import { FaUser, FaHistory, FaCog, FaRobot } from "react-icons/fa";
+import { FaUser, FaHistory, FaCog, FaRobot, FaTrash } from "react-icons/fa";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { signOut } from "@/app/login/actions";
@@ -9,6 +9,7 @@ import { ModeToggle } from "@/components/ui/modetoggler";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { chatService, type ChatSession } from "@/lib/services/chat";
+import { useToast } from "@/hooks/use-toast";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -48,6 +49,7 @@ const Sidebar = ({ onClose }: SidebarProps) => {
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
 
   const router = useRouter();
+  const { toast } = useToast();
 
   useEffect(() => {
     const supabase = createClient();
@@ -112,23 +114,41 @@ const Sidebar = ({ onClose }: SidebarProps) => {
   }, []);
 
   useEffect(() => {
-    const fetchChats = async () => {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    const supabase = createClient();
+    let unsubscribe: (() => void) | undefined;
 
-      if (user) {
-        try {
-          const sessions = await chatService.fetchUserSessions(user.id);
-          setChatSessions(sessions);
-        } catch (error) {
-          console.error("Error fetching chats:", error);
+    const setupRealtimeSubscription = async () => {
+      try {
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser();
+
+        if (error || !user) {
+          console.error("Error getting user:", error);
+          return;
         }
+
+        // Setup real-time subscription
+        unsubscribe = await chatService.subscribeToSessions(
+          user.id,
+          (updatedSessions) => {
+            console.log("Received updated sessions:", updatedSessions); // Debug log
+            setChatSessions(updatedSessions);
+          }
+        );
+      } catch (error) {
+        console.error("Error setting up chat sessions subscription:", error);
       }
     };
 
-    fetchChats();
+    setupRealtimeSubscription();
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, []);
 
   const sidebarVariants = {
@@ -167,7 +187,6 @@ const Sidebar = ({ onClose }: SidebarProps) => {
     const supabase = createClient();
 
     try {
-      // Get current user
       const {
         data: { user },
         error: userError,
@@ -178,7 +197,6 @@ const Sidebar = ({ onClose }: SidebarProps) => {
         return;
       }
 
-      // Create new chat session
       const { data, error } = await supabase
         .from("chat_sessions")
         .insert({
@@ -192,19 +210,50 @@ const Sidebar = ({ onClose }: SidebarProps) => {
 
       if (error) {
         console.error("Error creating chat:", error);
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Failed to create new chat",
+        });
         return;
       }
 
-      // Refresh the chat list
-      router.refresh();
+      toast({
+        title: "Success",
+        description: "New chat created",
+      });
 
-      // Navigate to the new chat
       router.push(`/chat/${data.id}`);
-
-      // Close sidebar on mobile
       onClose();
     } catch (error) {
       console.error("Error:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Something went wrong",
+      });
+    }
+  };
+
+  const handleDeleteChat = async (e: React.MouseEvent, chatId: string) => {
+    e.stopPropagation();
+
+    try {
+      await chatService.deleteSession(chatId);
+
+      toast({
+        title: "Success",
+        description: "Chat deleted successfully",
+      });
+      location.reload();
+      onClose();
+    } catch (error) {
+      console.error("Error:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to delete chat",
+      });
     }
   };
 
@@ -318,13 +367,23 @@ const Sidebar = ({ onClose }: SidebarProps) => {
                     onClose();
                   }}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-                      <FaRobot className="w-4 h-4 text-primary/70" />
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+                        <FaRobot className="w-4 h-4 text-primary/70" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-medium">{chat.title}</h3>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-sm font-medium">{chat.title}</h3>
-                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="opacity-0 group-hover:opacity-100 h-8 w-8 hover:bg-destructive/10 hover:text-destructive transition-all duration-200"
+                      onClick={(e) => handleDeleteChat(e, chat.id)}
+                    >
+                      <FaTrash className="w-3.5 h-3.5" />
+                    </Button>
                   </div>
                 </motion.div>
               ))}

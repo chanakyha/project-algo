@@ -81,6 +81,50 @@ class ChatService {
     if (error) throw error;
     return data;
   }
+
+  async deleteSession(sessionId: string) {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("chat_sessions")
+      .delete()
+      .eq("id", sessionId);
+
+    if (error) throw error;
+  }
+
+  async subscribeToSessions(
+    userId: string,
+    onSessionChange: (sessions: ChatSession[]) => void
+  ) {
+    const supabase = createClient();
+
+    // Initial fetch
+    const initialSessions = await this.fetchUserSessions(userId);
+    onSessionChange(initialSessions);
+
+    const channel = supabase
+      .channel(`chat_sessions_${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*", // Listen to all events (INSERT, UPDATE, DELETE)
+          schema: "public",
+          table: "chat_sessions",
+          filter: `user_id=eq.${userId}`,
+        },
+        async () => {
+          const sessions = await this.fetchUserSessions(userId);
+          onSessionChange(sessions);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }
 }
 
 export const chatService = new ChatService();

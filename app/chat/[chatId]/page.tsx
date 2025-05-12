@@ -2,11 +2,14 @@
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { IoSend, IoCopy } from "react-icons/io5";
-import { FaRobot, FaUser } from "react-icons/fa";
+import { FaRobot, FaUser, FaTrash } from "react-icons/fa";
 import { Button } from "@/components/ui/button";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { a11yDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { MdFullscreen } from "react-icons/md";
+import { chatService } from "@/lib/services/chat";
+import { useRouter } from "next/navigation";
+import { useToast } from "@/hooks/use-toast";
 
 interface Message {
   content: string;
@@ -28,6 +31,9 @@ const MainPage = () => {
     code: string;
     language: string;
   } | null>(null);
+
+  const router = useRouter();
+  const { toast } = useToast();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -81,6 +87,29 @@ const MainPage = () => {
       await navigator.clipboard.writeText(text);
     } catch (err) {
       console.error("Failed to copy text: ", err);
+    }
+  };
+
+  const handleDeleteChat = async () => {
+    try {
+      const chatId = window.location.pathname.split("/").pop();
+      if (!chatId) return;
+
+      await chatService.deleteSession(chatId);
+
+      toast({
+        title: "Success",
+        description: "Chat deleted successfully",
+      });
+
+      router.push("/");
+    } catch (error) {
+      console.error("Error deleting chat:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to delete chat",
+      });
     }
   };
 
@@ -145,6 +174,31 @@ const MainPage = () => {
   return (
     <div className="flex h-screen bg-gradient-to-b from-background to-background/95">
       <div className="flex-1 flex flex-col">
+        <motion.div
+          initial={{ y: -20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="border-b bg-card/80 backdrop-blur-sm p-4"
+        >
+          <div className="w-[95%] mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <motion.div
+                whileHover={{ rotate: 15 }}
+                transition={{ duration: 0.2 }}
+              >
+                <FaRobot className="w-5 h-5 text-primary" />
+              </motion.div>
+              <h2 className="text-lg font-medium">Chat</h2>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleDeleteChat}
+              className="h-9 w-9 hover:bg-destructive/10 hover:text-destructive transition-all duration-200"
+            >
+              <FaTrash className="w-4 h-4" />
+            </Button>
+          </div>
+        </motion.div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           <div className="max-w-[95%] mx-auto">
             <AnimatePresence mode="popLayout">
