@@ -7,6 +7,8 @@ import { useState, useEffect } from "react";
 import { signOut } from "@/app/login/actions";
 import { ModeToggle } from "@/components/ui/modetoggler";
 import { createClient } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
+import { chatService, type ChatSession } from "@/lib/services/chat";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -43,6 +45,9 @@ const Sidebar = ({ onClose }: SidebarProps) => {
     last_sign_in_at: undefined,
     user_metadata: undefined,
   });
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+
+  const router = useRouter();
 
   useEffect(() => {
     const supabase = createClient();
@@ -106,6 +111,26 @@ const Sidebar = ({ onClose }: SidebarProps) => {
     };
   }, []);
 
+  useEffect(() => {
+    const fetchChats = async () => {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user) {
+        try {
+          const sessions = await chatService.fetchUserSessions(user.id);
+          setChatSessions(sessions);
+        } catch (error) {
+          console.error("Error fetching chats:", error);
+        }
+      }
+    };
+
+    fetchChats();
+  }, []);
+
   const sidebarVariants = {
     hidden: { x: -300, opacity: 0 },
     visible: {
@@ -136,6 +161,51 @@ const Sidebar = ({ onClose }: SidebarProps) => {
         ease: "easeOut",
       },
     }),
+  };
+
+  const handleNewChat = async () => {
+    const supabase = createClient();
+
+    try {
+      // Get current user
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        console.error("Error getting user:", userError);
+        return;
+      }
+
+      // Create new chat session
+      const { data, error } = await supabase
+        .from("chat_sessions")
+        .insert({
+          user_id: user.id,
+          title: "New Chat",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error creating chat:", error);
+        return;
+      }
+
+      // Refresh the chat list
+      router.refresh();
+
+      // Navigate to the new chat
+      router.push(`/chat/${data.id}`);
+
+      // Close sidebar on mobile
+      onClose();
+    } catch (error) {
+      console.error("Error:", error);
+    }
   };
 
   return (
@@ -202,10 +272,7 @@ const Sidebar = ({ onClose }: SidebarProps) => {
             <Button
               variant="default"
               className="w-full h-10 font-medium mb-2"
-              onClick={() => {
-                // Handle new chat creation here
-                console.log("New chat initiated");
-              }}
+              onClick={handleNewChat}
             >
               <FaRobot className="mr-2 h-4 w-4" /> New Chat
             </Button>
@@ -238,24 +305,25 @@ const Sidebar = ({ onClose }: SidebarProps) => {
         <div className="flex-1 overflow-y-auto px-3 py-4">
           {activeSection === "chats" ? (
             <div className="space-y-2">
-              {[1, 2, 3].map((chat, i) => (
+              {chatSessions.map((chat, i) => (
                 <motion.div
-                  key={chat}
+                  key={chat.id}
                   custom={i}
                   variants={contentVariants}
                   initial="hidden"
                   animate="visible"
                   className="p-3.5 rounded-lg hover:bg-secondary/60 cursor-pointer transition-all duration-200 border border-transparent hover:border-border/50 group"
+                  onClick={() => {
+                    router.push(`/chat/${chat.id}`);
+                    onClose();
+                  }}
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                       <FaRobot className="w-4 h-4 text-primary/70" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-medium">Chat {chat}</h3>
-                      <p className="text-xs text-muted-foreground truncate mt-0.5">
-                        Last message from this chat...
-                      </p>
+                      <h3 className="text-sm font-medium">{chat.title}</h3>
                     </div>
                   </div>
                 </motion.div>
