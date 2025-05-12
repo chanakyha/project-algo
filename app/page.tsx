@@ -5,7 +5,7 @@ import { IoSend, IoMenuOutline, IoCopy } from "react-icons/io5";
 import { FaRobot, FaUser } from "react-icons/fa";
 import { Button } from "@/components/ui/button";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vs2015 } from "react-syntax-highlighter/dist/esm/styles/hljs";
+import { a11yDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { MdFullscreen } from "react-icons/md";
 
 import Sidebar from "@/components/sidebar";
@@ -94,7 +94,7 @@ const MainPage = () => {
     return (
       <div className="space-y-4">
         <p className="text-sm whitespace-pre-wrap leading-relaxed">
-          {message.content}
+          {message.explanation || message.content}
         </p>
         {message.codeBlocks?.map((block, index) => (
           <motion.div
@@ -124,7 +124,8 @@ const MainPage = () => {
                 </Button>
               </div>
               <SyntaxHighlighter
-                style={vs2015}
+                style={a11yDark}
+                language={block.language}
                 className="rounded-lg !m-0 shadow-lg border border-border/50"
                 showLineNumbers
                 wrapLines
@@ -323,7 +324,8 @@ const MainPage = () => {
                   ×
                 </Button>
                 <SyntaxHighlighter
-                  style={vs2015}
+                  style={a11yDark}
+                  language={fullscreenCode.language}
                   className="rounded-lg !m-0 shadow-xl"
                   showLineNumbers
                   wrapLines

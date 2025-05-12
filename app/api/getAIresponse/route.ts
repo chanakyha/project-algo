@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: "https://api.together.xyz/v1",
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
+console.log(process.env.GEMINI_API_KEY);
 
 const SYSTEM_MESSAGE = {
   role: "system" as const,
@@ -42,8 +41,8 @@ async function handleAIRequest<T>(
   action: () => Promise<T>
 ): Promise<T | NextResponse> {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error("OpenAI API key is not configured");
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error("Gemini API key is not configured");
     }
     return await action();
   } catch (error) {
@@ -69,60 +68,47 @@ export async function POST(request: Request) {
       );
     }
 
-    const messages = [
-      SYSTEM_MESSAGE,
-      ...(context || []),
-      {
-        role: "user" as const,
-        content: message,
-      },
-    ];
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const response = await openai.chat.completions.create({
-      model: "mistralai/Mixtral-8x7B-Instruct-v0.1",
-      messages,
-      max_tokens: 4096,
-      temperature: 0.4,
-      top_p: 0.2,
-      frequency_penalty: 0.5,
-      presence_penalty: 0.5,
-    });
+    // Combine context and message
+    const fullPrompt = [
+      SYSTEM_MESSAGE.content,
+      ...(context || []).map(
+        (msg: { role: string; content: string }) => msg.content
+      ),
+      message,
+    ].join("\n\n");
+    console.log(fullPrompt);
 
-    if (!response.choices[0]?.message?.content) {
+    const result = await model.generateContent(fullPrompt);
+    const response = await result.response;
+    const content = response.text();
+
+    if (!content) {
       throw new Error("No response content received from API");
     }
 
-    return NextResponse.json(
-      await processAIResponse(response.choices[0].message.content)
-    );
+    return NextResponse.json(await processAIResponse(content));
   });
 }
 
 export async function GET() {
   return handleAIRequest(async () => {
-    const response = await openai.chat.completions.create({
-      model: "mistralai/Mixtral-8x7B-Instruct-v0.1",
-      messages: [
-        SYSTEM_MESSAGE,
-        {
-          role: "user",
-          content:
-            "Generate examples of clean code following best practices in multiple programming languages.",
-        },
-      ],
-      max_tokens: 4096,
-      temperature: 0.4,
-      top_p: 0.2,
-      frequency_penalty: 0.5,
-      presence_penalty: 0.5,
-    });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    if (!response.choices[0]?.message?.content) {
+    const prompt = [
+      SYSTEM_MESSAGE.content,
+      "Generate examples of clean code following best practices in multiple programming languages.",
+    ].join("\n\n");
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const content = response.text();
+
+    if (!content) {
       throw new Error("No response content received from API");
     }
 
-    return NextResponse.json(
-      await processAIResponse(response.choices[0].message.content)
-    );
+    return NextResponse.json(await processAIResponse(content));
   });
 }
