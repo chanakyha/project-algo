@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { IoSend, IoCopy } from "react-icons/io5";
-import { FaRobot, FaUser, FaTrash } from "react-icons/fa";
+import { FaRobot, FaUser, FaTrash, FaImage } from "react-icons/fa";
 import { Button } from "@/components/ui/button";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { a11yDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
@@ -11,6 +11,7 @@ import { chatService } from "@/lib/services/chat";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { createClient } from "@/lib/supabase/client";
+import Image from "next/image";
 
 interface Message {
   content: string;
@@ -20,13 +21,45 @@ interface Message {
     language: string;
   }>;
   explanation?: string;
+  image?: {
+    url: string;
+    name: string;
+  };
 }
+
+const ImagePreview = ({
+  image,
+  onRemove,
+}: {
+  image: File;
+  onRemove: () => void;
+}) => {
+  return (
+    <div className="relative inline-block">
+      <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-border">
+        <Image
+          src={URL.createObjectURL(image)}
+          alt="Preview"
+          fill
+          className="object-cover"
+        />
+      </div>
+      <button
+        onClick={onRemove}
+        className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center hover:bg-destructive/90 transition-colors"
+      >
+        ×
+      </button>
+    </div>
+  );
+};
 
 const MainPage = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [chatExists, setChatExists] = useState(true);
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [fullscreenCode, setFullscreenCode] = useState<{
@@ -80,6 +113,12 @@ const MainPage = () => {
       const formattedMessages = data.map((msg) => ({
         role: msg.role as "user" | "assistant",
         content: msg.content,
+        ...(msg.image_url && {
+          image: {
+            url: msg.image_url,
+            name: "Uploaded Image",
+          },
+        }),
         // Parse code blocks and explanation if it's an AI message
         ...(msg.role === "assistant" && {
           codeBlocks: extractCodeBlocks(msg.content),
@@ -111,18 +150,69 @@ const MainPage = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() && !selectedImage) return;
 
     const chatId = window.location.pathname.split("/").pop();
     if (!chatId) return;
 
-    const userMessage: Message = { role: "user", content: input };
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setIsLoading(true);
+    let imageUrl = null;
+    const supabase = createClient();
 
     try {
-      const supabase = createClient();
+      // Upload image to Supabase Storage if present
+      if (selectedImage) {
+        const fileExt = selectedImage.name.split(".").pop();
+        const fileName = `${Date.now()}-${Math.random()
+          .toString(36)
+          .substring(2)}.${fileExt}`;
+        const filePath = `${chatId}/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("chat-images")
+          .upload(filePath, selectedImage);
+
+        if (uploadError) {
+          throw new Error(`Failed to upload image: ${uploadError.message}`);
+        }
+
+        // Get public URL for the uploaded image
+        const {
+          data: { publicUrl },
+        } = supabase.storage.from("chat-images").getPublicUrl(filePath);
+
+        imageUrl = publicUrl;
+      }
+
+      const formData = new FormData();
+      if (input.trim()) formData.append("message", input);
+      if (selectedImage) {
+        formData.append("image", selectedImage);
+      }
+      formData.append(
+        "context",
+        JSON.stringify(
+          messages.map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+          }))
+        )
+      );
+
+      const userMessage: Message = {
+        role: "user",
+        content: input,
+        ...(imageUrl && {
+          image: {
+            url: imageUrl,
+            name: selectedImage!.name,
+          },
+        }),
+      };
+
+      setMessages((prev) => [...prev, userMessage]);
+      setInput("");
+      setSelectedImage(null);
+      setIsLoading(true);
 
       // Save user message to Supabase
       const { error: userMessageError } = await supabase
@@ -132,6 +222,7 @@ const MainPage = () => {
           content: input,
           role: "user",
           created_at: new Date().toISOString(),
+          image_url: imageUrl,
         })
         .select();
 
@@ -140,35 +231,10 @@ const MainPage = () => {
         throw new Error("Failed to save user message");
       }
 
-      // Update chat session title if this is the first message
-      const { data: messagesCount, error: countError } = await supabase
-        .from("messages")
-        .select("id", { count: "exact" })
-        .eq("chat_session_id", chatId);
-
-      if (!countError && messagesCount.length === 1) {
-        // This is the first message, update the chat title
-        const { error: updateError } = await supabase
-          .from("chat_sessions")
-          .update({ title: input })
-          .eq("id", chatId);
-
-        if (updateError) {
-          console.error("Error updating chat title:", updateError);
-        }
-      }
-
       // Get AI response
       const response = await fetch("/api/getAIresponse", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: input,
-          context: messages.map((msg) => ({
-            role: msg.role,
-            content: msg.content,
-          })),
-        }),
+        body: formData,
       });
 
       if (!response.ok) throw new Error("API call failed");
@@ -181,7 +247,7 @@ const MainPage = () => {
         explanation: data.explanation,
       };
 
-      // Save AI message to Supabase
+      // Save AI response to Supabase
       const { error: aiMessageError } = await supabase
         .from("messages")
         .insert({
@@ -242,12 +308,18 @@ const MainPage = () => {
   };
 
   const renderMessage = (message: Message) => {
-    if (message.role === "user") {
-      return <p className="text-sm">{message.content}</p>;
-    }
-
     return (
       <div className="space-y-4">
+        {message.image && (
+          <div className="relative w-64 h-64 mb-4">
+            <Image
+              src={message.image.url}
+              alt={message.image.name}
+              fill
+              className="object-cover rounded-lg"
+            />
+          </div>
+        )}
         <p className="text-sm whitespace-pre-wrap leading-relaxed">
           {message.explanation || message.content}
         </p>
@@ -430,21 +502,55 @@ const MainPage = () => {
           transition={{ duration: 0.5, ease: "easeOut" }}
           className="border-t bg-card/80 backdrop-blur-sm p-4"
         >
-          <form onSubmit={handleSubmit} className="w-[95%] mx-auto flex gap-3">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type your message..."
-              className="flex-1 p-3 rounded-lg border bg-background/50 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all duration-300"
-            />
-            <Button
-              type="submit"
-              disabled={isLoading}
-              className="p-3 rounded-lg hover:scale-105 transition-transform duration-200"
-            >
-              <IoSend className="w-5 h-5" />
-            </Button>
+          <form onSubmit={handleSubmit} className="w-[95%] mx-auto space-y-3">
+            {selectedImage && (
+              <div className="flex items-center gap-2 p-2 bg-background/50 rounded-lg">
+                <ImagePreview
+                  image={selectedImage}
+                  onRemove={() => setSelectedImage(null)}
+                />
+                <span className="text-sm text-muted-foreground">
+                  {selectedImage.name}
+                </span>
+              </div>
+            )}
+            <div className="flex gap-3">
+              <div className="flex-1 flex gap-2">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Type your message..."
+                  className="flex-1 p-3 rounded-lg border bg-background/50 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all duration-300"
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) =>
+                    setSelectedImage(e.target.files?.[0] || null)
+                  }
+                  className="hidden"
+                  id="image-upload"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    document.getElementById("image-upload")?.click()
+                  }
+                  className="p-3 rounded-lg"
+                >
+                  <FaImage className="w-5 h-5" />
+                </Button>
+              </div>
+              <Button
+                type="submit"
+                disabled={isLoading}
+                className="p-3 rounded-lg hover:scale-105 transition-transform duration-200"
+              >
+                <IoSend className="w-5 h-5" />
+              </Button>
+            </div>
           </form>
         </motion.div>
       </div>

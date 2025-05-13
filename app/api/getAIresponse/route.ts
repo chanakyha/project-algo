@@ -58,38 +58,59 @@ async function handleAIRequest<T>(
 }
 
 export async function POST(request: Request) {
-  return handleAIRequest(async () => {
-    const { message, context } = await request.json();
+  try {
+    const formData = await request.formData();
+    const message = formData.get("message") as string;
+    const image = formData.get("image") as File | null;
 
-    if (!message) {
+    if (!message && !image) {
       return NextResponse.json(
-        { error: "Message is required" },
+        { error: "Message or image is required" },
         { status: 400 }
       );
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    // Combine context and message
-    const fullPrompt = [
-      SYSTEM_MESSAGE.content,
-      ...(context || []).map(
-        (msg: { role: string; content: string }) => msg.content
-      ),
-      message,
-    ].join("\n\n");
-    console.log(fullPrompt);
+    let content;
+    if (image) {
+      // Convert image to base64 for Gemini API
+      const bytes = await image.arrayBuffer();
+      const buffer = Buffer.from(bytes);
+      const imageBase64 = buffer.toString("base64");
+      const mimeType = image.type;
 
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    const content = response.text();
+      // Generate content with image
+      const result = await model.generateContent([
+        message ||
+          "Analyze this image and provide relevant code examples if applicable",
+        {
+          inlineData: {
+            mimeType,
+            data: imageBase64,
+          },
+        },
+      ]);
+
+      content = result.response.text();
+    } else {
+      // Text-only response
+      const result = await model.generateContent(message);
+      content = result.response.text();
+    }
 
     if (!content) {
       throw new Error("No response content received from API");
     }
 
     return NextResponse.json(await processAIResponse(content));
-  });
+  } catch (error) {
+    console.error("Error:", error);
+    return NextResponse.json(
+      { error: "Failed to process request" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function GET() {
